@@ -65,8 +65,9 @@ jobs:
       - name: Create zip
         if: steps.check_tag.outputs.exists == 'false'
         run: |
+          cp install.sh build/export/
           cd build/export
-          zip -r ../../uguisu-${{ steps.version.outputs.version }}.zip uguisu.app
+          zip -r ../../uguisu-${{ steps.version.outputs.version }}.zip uguisu.app install.sh
 
       - name: Create tag
         if: steps.check_tag.outputs.exists == 'false'

@@ -9,9 +9,25 @@ macOS向けの音声入力アプリケーション（開発中）
 
 ## インストール
 
-1. [Releases](https://github.com/s4na/uguisu/releases)からダウンロード
+1. [Releases](https://github.com/s4na/uguisu/releases)から最新のzipをダウンロード
+2. zipを展開
+3. ターミナルで以下を実行:
+   ```bash
+   cd ~/Downloads/uguisu-vX.X.X  # 展開したフォルダに移動
+   ./install.sh
+   ```
+4. 初回起動時にAccessibility権限を許可
+
+### 手動インストール
+
+インストールスクリプトを使わない場合:
+
+1. ターミナルで quarantine 属性を削除:
+   ```bash
+   xattr -cr ~/Downloads/uguisu-vX.X.X/uguisu.app
+   ```
 2. `uguisu.app` をアプリケーションフォルダに移動
-3. 初回起動時にAccessibility権限を許可
+3. 右クリック →「開く」で初回起動
 
 ## 使い方
 
