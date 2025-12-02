@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(cat VERSION | tr -d '\n')
+          echo "version=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: v${VERSION}"
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          git fetch --tags
+          if git tag -l "${{ steps.version.outputs.version }}" | grep -q .; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Select Xcode version
+        if: steps.check_tag.outputs.exists == 'false'
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+
+      - name: Show Xcode version
+        if: steps.check_tag.outputs.exists == 'false'
+        run: xcodebuild -version
+
+      - name: Build Release (Universal Binary)
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          xcodebuild archive \
+            -scheme uguisu \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath build/uguisu.xcarchive \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Export app
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          mkdir -p build/export
+          cp -R build/uguisu.xcarchive/Products/Applications/uguisu.app build/export/
+
+      - name: Create zip
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          cd build/export
+          zip -r ../../uguisu-${{ steps.version.outputs.version }}.zip uguisu.app
+
+      - name: Create tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.version.outputs.version }}
+          git push origin ${{ steps.version.outputs.version }}
+
+      - name: Create Release
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          files: uguisu-${{ steps.version.outputs.version }}.zip
+          generate_release_notes: true
+
+      - name: Bump patch version
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          VERSION=$(cat VERSION | tr -d '\n')
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+          NEW_PATCH=$((PATCH + 1))
+          echo "${MAJOR}.${MINOR}.${NEW_PATCH}" > VERSION
+          git add VERSION
+          git commit -m "Bump version to ${MAJOR}.${MINOR}.${NEW_PATCH}"
+          git pull --rebase origin main
+          git push origin main

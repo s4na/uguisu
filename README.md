@@ -9,7 +9,7 @@ macOS向けの音声入力アプリケーション（開発中）
 
 ## インストール
 
-1. [Releases](https://github.com/s4na/uguisu/releases)からダウンロード（準備中）
+1. [Releases](https://github.com/s4na/uguisu/releases)からダウンロード
 2. `uguisu.app` をアプリケーションフォルダに移動
 3. 初回起動時にAccessibility権限を許可
 
