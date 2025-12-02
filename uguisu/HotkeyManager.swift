@@ -26,7 +26,7 @@ class HotkeyManager {
         let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
 
         let callback: CGEventTapCallBack = { proxy, type, event, refcon in
-            guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+            guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<HotkeyManager>.fromOpaque(refcon).takeUnretainedValue()
             return manager.handleEvent(proxy: proxy, type: type, event: event)
         }
@@ -77,11 +77,11 @@ class HotkeyManager {
                 print("Event tap was disabled, re-enabling...")
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
 
         guard type == .keyDown else {
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
@@ -104,7 +104,7 @@ class HotkeyManager {
             return nil
         }
 
-        return Unmanaged.passRetained(event)
+        return Unmanaged.passUnretained(event)
     }
 
     private func promptForAccessibilityPermission() {
