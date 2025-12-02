@@ -1019,6 +1019,25 @@ extension SPUUpdaterDelegate {
   * `defer` ブロックでエラー時も確実にクリーンアップ
   * swap/core dump への漏洩防止のため一時ファイルは作成しない
 
+* **一時ファイル**:
+  * ディスク I/O を減らすため、**可能な限りオンメモリで処理**
+  * 一時ファイルが必要な場合（大容量音声など）は暗号化して保存し、処理後即削除
+  * `/tmp` や `NSTemporaryDirectory()` への書き込みは原則禁止
+
+* **ログ出力の制限**（プライバシー保護）:
+  ```swift
+  // ❌ 絶対にログ出力しない
+  Logger.log("Audio data: \(audioBuffer.data)")
+  Logger.log("Transcribed text: \(result)")
+
+  // ✅ 許可されるログ
+  Logger.log("Recording started, duration: \(duration)s")
+  Logger.log("Transcription completed, length: \(text.count) chars")
+  Logger.log("STT model: \(modelName), latency: \(latency)ms")
+  ```
+  * デバッグログであっても、音声データそのものや変換後のテキスト内容は**絶対に出力しない**
+  * 許可される情報: 処理時間、データ長、モデル名、エラーコード（内容は除く）
+
 * **データ保持ポリシー**:
   | 状態 | 音声データ | テキストデータ |
   |------|-----------|---------------|
