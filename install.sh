@@ -22,11 +22,16 @@ echo "uguisu をインストールしています..."
 echo "→ セキュリティ属性を解除中..."
 xattr -cr "$APP_PATH"
 
+# 既存アプリのチェック
+if [ -d "$DEST_PATH" ]; then
+    echo "エラー: $DEST_PATH が既に存在します"
+    echo "既存のアプリを削除してから再度実行してください:"
+    echo "  rm -rf \"$DEST_PATH\""
+    exit 1
+fi
+
 # Applicationsフォルダにコピー
 echo "→ アプリケーションフォルダにコピー中..."
-if [ -d "$DEST_PATH" ]; then
-    rm -rf "$DEST_PATH"
-fi
 cp -R "$APP_PATH" "$DEST_PATH"
 
 echo ""
