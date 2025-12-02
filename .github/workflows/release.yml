@@ -57,6 +57,11 @@ jobs:
           mkdir -p build/export
           cp -R build/uguisu.xcarchive/Products/Applications/uguisu.app build/export/
 
+      - name: Ad-hoc code sign
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          codesign --force --deep --sign - build/export/uguisu.app
+
       - name: Create zip
         if: steps.check_tag.outputs.exists == 'false'
         run: |
