@@ -451,7 +451,102 @@ enum BackendType: String, Codable {
 
 ---
 
-## 14. Open Questions / TODO
+## 14. Distribution & Installation
+
+### 14.1 Homebrew Cask（推奨）
+
+uguisu は Homebrew Cask 経由でインストール可能にする。
+
+```bash
+# インストール
+brew install --cask uguisu
+
+# アップグレード
+brew upgrade --cask uguisu
+
+# アンインストール
+brew uninstall --cask uguisu
+```
+
+#### Cask 定義（homebrew-cask への PR 用）
+
+```ruby
+cask "uguisu" do
+  version "1.0.0"
+  sha256 "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+  url "https://github.com/s4na/uguisu/releases/download/v#{version}/uguisu-#{version}.dmg"
+  name "uguisu"
+  desc "macOS voice shortcut input app - speak and type anywhere"
+  homepage "https://github.com/s4na/uguisu"
+
+  app "uguisu.app"
+
+  zap trash: [
+    "~/Library/Application Support/uguisu",
+    "~/Library/Preferences/com.s4na.uguisu.plist",
+    "~/Library/Caches/com.s4na.uguisu",
+  ]
+end
+```
+
+#### 自前 Tap の運用（初期リリース用）
+
+公式 homebrew-cask にマージされるまでは、自前の Tap で配布:
+
+```bash
+# Tap を追加
+brew tap s4na/tap
+
+# インストール
+brew install --cask s4na/tap/uguisu
+```
+
+Tap リポジトリ構成:
+```
+s4na/homebrew-tap/
+├── Casks/
+│   └── uguisu.rb
+└── README.md
+```
+
+### 14.2 GitHub Releases
+
+* リリースごとに以下のアセットを添付:
+  * `uguisu-<version>.dmg` - ディスクイメージ（ドラッグ&ドロップインストール用）
+  * `uguisu-<version>.zip` - 圧縮アーカイブ
+  * `uguisu-<version>.pkg` - インストーラパッケージ（オプション）
+* すべてのバイナリは Apple Developer ID で署名 & notarization 済み
+
+### 14.3 ビルド & リリースパイプライン
+
+GitHub Actions でリリースを自動化:
+
+1. タグ `v*` がプッシュされたらワークフロー起動
+2. `xcodebuild` でアプリをビルド（Release 構成）
+3. `codesign` で署名
+4. `notarytool` で notarization 実行
+5. DMG / ZIP を作成
+6. GitHub Release を作成し、アセットをアップロード
+7. Homebrew Tap の Cask 定義を自動更新（SHA256 とバージョン）
+
+### 14.4 署名 & Notarization
+
+* **必須**: Apple Developer Program への登録（年間 $99）
+* **Developer ID Application** 証明書でアプリに署名
+* **Notarization** で Apple のマルウェアチェックを通過
+* Gatekeeper でブロックされずにインストール可能
+
+### 14.5 システム要件
+
+* macOS 13 Ventura 以降
+* Apple Silicon (M1/M2/M3) および Intel Mac 対応（Universal Binary）
+* マイクアクセス権限
+* アクセシビリティ権限（テキスト挿入用）
+
+---
+
+## 15. Open Questions / TODO
 
 1. **STT モデルの具体的な候補**
 
@@ -470,9 +565,10 @@ enum BackendType: String, Codable {
 5. **ライセンス**
 
    * ローカル STT ライブラリや依存 OSS のライセンス確認
-6. **配布形態**
+6. **Homebrew 公式 Cask への登録**
 
-   * notarization / sandbox / App Store かどうか
+   * 一定のユーザー数・スター数が必要（目安: 30+ stars, 30+ forks, or 75+ watchers）
+   * 初期は自前 Tap で運用し、条件を満たしたら公式へ PR
 
 ---
 
