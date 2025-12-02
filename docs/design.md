@@ -546,7 +546,421 @@ GitHub Actions でリリースを自動化:
 
 ---
 
-## 15. Open Questions / TODO
+## 15. Security Considerations
+
+### 15.1 クリップボード操作のセキュリティ
+
+クリップボードフォールバック使用時のリスクと対策:
+
+* **リスク**:
+  * 他アプリが同時にクリップボードにアクセスした場合のレースコンディション
+  * クリップボード履歴ツールによる機密データの露出
+  * 復元失敗時に音声テキストがクリップボードに残る
+
+* **対策**:
+  ```swift
+  class ClipboardManager {
+      private let lock = NSLock()
+
+      func insertWithClipboard(_ text: String) {
+          lock.lock()
+          defer { lock.unlock() }
+
+          let pasteboard = NSPasteboard.general
+          let originalContents = pasteboard.string(forType: .string)
+
+          pasteboard.clearContents()
+          pasteboard.setString(text, forType: .string)
+
+          // Cmd+V を送信
+          sendPasteKeystroke()
+
+          // ペースト完了を待機（100ms）
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+              pasteboard.clearContents()
+              if let original = originalContents {
+                  pasteboard.setString(original, forType: .string)
+              }
+          }
+      }
+  }
+  ```
+  * アトミックな操作のためロックを使用
+  * ペースト完了を確認してから復元
+  * 失敗時はユーザーに「クリップボードが上書きされました」と通知
+
+### 15.2 API キー管理
+
+* **Keychain 保存設定**:
+  * `kSecAttrAccessibleWhenUnlocked` でロック解除時のみアクセス可能
+  * アプリ固有のアクセスグループを使用
+  * キー追加時にバリデーション（空文字・無効形式の検出）
+
+* **キーローテーション**:
+  * キー更新時は古いキーを安全に削除
+  * 削除前にゼロフィルでメモリをクリア
+
+* **環境変数サポート**（上級者向け）:
+  ```swift
+  func getAPIKey(for modelId: String) -> String? {
+      // 1. 環境変数を優先（CI/開発環境用）
+      if let envKey = ProcessInfo.processInfo.environment["UGUISU_API_KEY_\(modelId)"] {
+          return envKey
+      }
+      // 2. Keychain から取得
+      return KeychainManager.shared.getKey(for: modelId)
+  }
+  ```
+
+### 15.3 音声データのライフサイクル
+
+* **メモリ管理**:
+  * 音声バッファは変換完了後即座にゼロフィル & 解放
+  * `defer` ブロックでエラー時も確実にクリーンアップ
+  * swap/core dump への漏洩防止のため一時ファイルは作成しない
+
+* **データ保持ポリシー**:
+  | 状態 | 音声データ | テキストデータ |
+  |------|-----------|---------------|
+  | 録音中 | メモリ保持 | - |
+  | 変換中 | メモリ保持 | - |
+  | プレビュー | 即時解放 | メモリ保持 |
+  | 挿入完了 | - | 即時解放 |
+  | エラー | 即時解放 | 即時解放 |
+
+### 15.4 ネットワークセキュリティ
+
+* HTTPS 必須（HTTP エンドポイントは拒否）
+* 証明書ピニングの検討（主要クラウド STT サービス向け）
+* リクエストレート制限（1秒あたり最大10リクエスト）
+* 指数バックオフによるリトライ（最大3回）
+
+### 15.5 テキスト挿入のセキュリティ
+
+* **ターミナル検出**: ターミナルアプリへの挿入時は警告を表示
+* **特殊文字エスケープ**: オプションで有効化可能なセーフモード
+* **アクセシビリティ API の最小権限**: フォーカス中のテキストフィールドのみ操作
+
+---
+
+## 16. Error Recovery & Concurrency
+
+### 16.1 状態遷移のスレッドセーフティ
+
+```swift
+actor AppStateManager {
+    private(set) var currentState: AppState = .idle
+
+    func transition(to newState: AppState) throws {
+        guard isValidTransition(from: currentState, to: newState) else {
+            throw StateError.invalidTransition(from: currentState, to: newState)
+        }
+        currentState = newState
+    }
+
+    private func isValidTransition(from: AppState, to: AppState) -> Bool {
+        // 有効な遷移のみ許可
+        switch (from, to) {
+        case (.idle, .overlayOpening),
+             (.overlayOpening, .ready),
+             (.ready, .recording), (.ready, .closing),
+             (.recording, .transcribing), (.recording, .closing),
+             (.transcribing, .preview), (.transcribing, .error),
+             (.preview, .insertAndClose), (.preview, .closing),
+             (.insertAndClose, .idle), (.insertAndClose, .error),
+             (.error, .idle),
+             (.closing, .idle):
+            return true
+        default:
+            return false
+        }
+    }
+}
+```
+
+### 16.2 レースコンディション対策
+
+| シナリオ | 問題 | 対策 |
+|---------|------|------|
+| 変換中に Esc | 変換結果が後から到着 | 状態チェック後に結果を破棄 |
+| 連続ショートカット | 複数ウィンドウが開く | 500ms デバウンス + 状態チェック |
+| 挿入中にアプリ切替 | 別アプリに挿入される | 挿入前にターゲットアプリを再確認 |
+| クリップボード競合 | データ損失 | ロック + 遅延復元 |
+
+### 16.3 エラーリカバリー戦略
+
+```swift
+enum RetryStrategy {
+    case immediate
+    case exponentialBackoff(baseDelay: TimeInterval, maxRetries: Int)
+    case noRetry
+}
+
+extension STTError {
+    var retryStrategy: RetryStrategy {
+        switch self {
+        case .networkError:
+            return .exponentialBackoff(baseDelay: 1.0, maxRetries: 3)
+        case .rateLimited:
+            return .exponentialBackoff(baseDelay: 5.0, maxRetries: 2)
+        case .unauthorized, .invalidResponse:
+            return .noRetry
+        case .internalError:
+            return .immediate // 1回だけリトライ
+        }
+    }
+}
+```
+
+### 16.4 グレースフルデグラデーション
+
+1. **クラウド STT 失敗時**: ローカルモデルへの自動フォールバック（設定で有効化）
+2. **アクセシビリティ API 失敗時**: クリップボード方式へフォールバック
+3. **クリップボード復元失敗時**: 「クリップボードにコピーしました」通知で終了
+4. **マイク切断時**: 録音済みデータを保持し、再接続を促す
+
+### 16.5 フォーカス管理
+
+```swift
+class FocusManager {
+    private var targetApp: NSRunningApplication?
+    private var targetElement: AXUIElement?
+
+    func captureCurrentFocus() {
+        targetApp = NSWorkspace.shared.frontmostApplication
+        targetElement = AXUIElementCreateSystemWide()
+        // フォーカス要素を取得・保存
+    }
+
+    func restoreAndInsert(_ text: String) -> Bool {
+        guard let app = targetApp else { return false }
+
+        // ターゲットアプリがまだ存在するか確認
+        guard app.isTerminated == false else {
+            return fallbackToClipboard(text)
+        }
+
+        // ターゲットアプリをアクティブ化
+        guard app.activate(options: .activateIgnoringOtherApps) else {
+            return fallbackToClipboard(text)
+        }
+
+        // 少し待ってから挿入
+        usleep(50_000) // 50ms
+        return insertText(text, to: targetElement)
+    }
+}
+```
+
+---
+
+## 17. Performance & Threading Model
+
+### 17.1 スレッディングアーキテクチャ
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Main Thread                          │
+│  • UI 更新                                                  │
+│  • ユーザー入力処理                                          │
+│  • 状態遷移の発火                                            │
+└─────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+┌───────────────┐   ┌───────────────┐   ┌───────────────┐
+│  Audio Queue  │   │   STT Queue   │   │  I/O Queue    │
+│  (High Pri)   │   │  (Default)    │   │  (Utility)    │
+│               │   │               │   │               │
+│ • 録音処理    │   │ • 音声変換    │   │ • Keychain    │
+│ • バッファ    │   │ • API 呼び出し │   │ • 設定保存    │
+└───────────────┘   └───────────────┘   └───────────────┘
+```
+
+### 17.2 パフォーマンス目標と計測
+
+| メトリクス | 目標 | 計測方法 |
+|-----------|------|----------|
+| ショートカット → ウィンドウ表示 | < 150ms | `os_signpost` |
+| 録音停止 → 変換開始 | < 50ms | `os_signpost` |
+| ローカル STT（10秒音声） | < 3s | `os_signpost` |
+| アイドル時 CPU 使用率 | < 0.5% | Instruments |
+| アイドル時メモリ | < 50MB | Instruments |
+| 録音中メモリ増加 | < 10MB/分 | Instruments |
+
+### 17.3 メモリ管理
+
+* **モデルのロード戦略**:
+  * デフォルトモデル: 起動時にプリロード
+  * 非デフォルトモデル: 初回使用時に遅延ロード
+  * 非アクティブモデル: 5分後にアンロード
+
+* **メモリ使用量の目安**:
+  | コンポーネント | メモリ |
+  |---------------|--------|
+  | ベースアプリ | ~30MB |
+  | Whisper tiny | ~150MB |
+  | Whisper base | ~300MB |
+  | Whisper small | ~500MB |
+
+* **メモリプレッシャー対応**:
+  ```swift
+  DispatchSource.makeMemoryPressureSource(eventMask: .warning, queue: .main)
+      .setEventHandler {
+          STTEngine.shared.unloadInactiveModels()
+      }
+  ```
+
+### 17.4 バッテリー最適化
+
+* **電源状態の監視**:
+  * バッテリー駆動時: GPU 使用を控え CPU のみで処理
+  * 低電力モード時: クラウド STT を推奨
+  * 充電中: フルパフォーマンス
+
+* **App Nap 対応**:
+  * アイドル時は App Nap を許可
+  * ショートカット監視のみ維持
+
+### 17.5 オーバーレイウィンドウの最適化
+
+* バックグラウンドでウィンドウを非表示状態で事前作成
+* ウィンドウ表示時はアニメーションを最小化
+* SwiftUI の `drawingGroup()` で描画を最適化
+
+---
+
+## 18. Testing Strategy
+
+### 18.1 ユニットテスト
+
+**目標カバレッジ**: 80%以上
+
+```swift
+// テスト対象と方針
+class STTEngineTests: XCTestCase {
+    func testTranscriptionSuccess() {
+        let mockProvider = MockSTTProvider(result: .success("こんにちは"))
+        let engine = STTEngine(provider: mockProvider)
+
+        let expectation = expectation(description: "transcription")
+        engine.transcribe(audioData: testAudioData) { result in
+            XCTAssertEqual(try? result.get(), "こんにちは")
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1.0)
+    }
+
+    func testTranscriptionNetworkError() {
+        let mockProvider = MockSTTProvider(result: .failure(.networkError))
+        // エラーハンドリングのテスト
+    }
+}
+
+class AppStateManagerTests: XCTestCase {
+    func testValidStateTransitions() {
+        // すべての有効な遷移をテスト
+    }
+
+    func testInvalidStateTransitions() {
+        // 無効な遷移が拒否されることをテスト
+    }
+}
+
+class ClipboardManagerTests: XCTestCase {
+    func testClipboardRestoration() {
+        // クリップボードの保存・復元をテスト
+    }
+}
+```
+
+### 18.2 インテグレーションテスト
+
+```swift
+class EndToEndTests: XCTestCase {
+    func testFullFlow_HotkeyToInsertion() {
+        // ショートカット → 録音 → 変換 → 挿入の全フロー
+    }
+
+    func testModelSwitchingDuringIdle() {
+        // モデル切り替えの動作確認
+    }
+
+    func testPermissionDeniedFlow() {
+        // 権限拒否時のフロー
+    }
+
+    func testErrorRecoveryFlow() {
+        // エラー発生 → リトライ → 成功
+    }
+}
+```
+
+### 18.3 UI テスト
+
+```swift
+class OverlayWindowUITests: XCTestCase {
+    func testOverlayAppearance() {
+        // ウィンドウの表示・非表示
+    }
+
+    func testKeyboardNavigation() {
+        // キーボードのみでの操作
+    }
+
+    func testVoiceOverAccessibility() {
+        // VoiceOver 対応
+    }
+}
+```
+
+### 18.4 互換性テストマトリクス
+
+| アプリ | AX API | クリップボード | 確認済み |
+|--------|--------|---------------|---------|
+| Safari | ✓ | ✓ | - |
+| Chrome | ✓ | ✓ | - |
+| VSCode | ? | ✓ | - |
+| Terminal | - | ✓ | - |
+| Slack | ✓ | ✓ | - |
+| Notion | ? | ✓ | - |
+| IntelliJ | ? | ✓ | - |
+
+### 18.5 パフォーマンステスト
+
+* **レイテンシ計測**: 各操作の応答時間を CI で自動計測
+* **メモリリーク検出**: 長時間実行テスト（24時間）
+* **負荷テスト**: 連続100回のショートカット発火
+
+### 18.6 セキュリティテスト
+
+* クリップボードレースコンディションの再現テスト
+* Keychain アクセス権限のテスト
+* ネットワーク傍受テスト（HTTPS 検証）
+* 音声バッファのメモリクリア確認
+
+### 18.7 CI/CD パイプライン
+
+```yaml
+# .github/workflows/test.yml
+name: Test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: xcodebuild build -scheme uguisu
+      - name: Unit Tests
+        run: xcodebuild test -scheme uguisu -destination 'platform=macOS'
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v3
+```
+
+---
+
+## 19. Open Questions / TODO
 
 1. **STT モデルの具体的な候補**
 
