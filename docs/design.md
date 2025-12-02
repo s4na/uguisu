@@ -1,13 +1,13 @@
-# EchoType – macOS Voice Shortcut Input App Design
+# uguisu – macOS Voice Shortcut Input App Design
 
-> **Project Name**: `EchoType`
+> **Project Name**: `uguisu`
 > **Tagline**: “Hit a shortcut, speak, hit Enter, text appears where you were typing.”
 
 ---
 
 ## 1. Overview
 
-EchoType は、macOS 上でグローバルショートカットを押すと立ち上がる「一時的な音声入力ランチャー」です。
+uguisu は、macOS 上でグローバルショートカットを押すと立ち上がる「一時的な音声入力ランチャー」です。
 
 1. ユーザーが任意のアプリ（エディタ、ブラウザ、チャットツールなど）で入力中にグローバルショートカットを押す
 2. 画面中央付近に小さなオーバーレイウィンドウが表示される
@@ -74,7 +74,7 @@ STT モデルは複数（ローカル / クラウド問わず）を切り替え�
 
 1. ユーザーが任意のアプリでテキストカーソルを置いている状態
 2. グローバルショートカット（例: `⌘ + ⇧ + Space`）を押す
-3. EchoType のオーバーレイウィンドウが表示される
+3. uguisu のオーバーレイウィンドウが表示される
 
    * フローティング、中央 or カーソル近く
 4. 録音開始
