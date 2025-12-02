@@ -519,17 +519,99 @@ class HotkeyManager {
 
 ### 10.3 テキスト挿入戦略
 
-1. **理想的パス**
+**基本方針**: クリップボードを汚さず、直接テキストフィールドに入力する
 
-   * アクセシビリティ API で対象テキストフィールドの `AXValue` を取得・更新
-   * カーソル位置を考慮した挿入（将来的な高度機能）
+#### 優先順位
 
-2. **フォールバックパス**
+```
+1. AXValue 直接設定（最優先）
+   ↓ 失敗
+2. AXSelectedText + キー入力シミュレーション
+   ↓ 失敗
+3. クリップボード経由（最終手段）
+```
 
-   * 現在のクリップボード内容を退避
-   * クリップボードに挿入テキストをセット
-   * `Cmd+V` キーイベントを合成して送る
-   * クリップボードを元に戻す
+#### 1. AXValue 直接設定（推奨）
+
+アクセシビリティ API でテキストフィールドの値を直接更新:
+
+```swift
+class TextInsertionService {
+    func insertText(_ text: String, to element: AXUIElement) -> Bool {
+        // 現在のテキストを取得
+        var currentValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &currentValue) == .success,
+              let currentText = currentValue as? String else {
+            return false
+        }
+
+        // カーソル位置を取得
+        var selectedRange: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRange)
+
+        // 新しいテキストを構築（カーソル位置に挿入）
+        let insertPosition = getInsertPosition(from: selectedRange) ?? currentText.count
+        var newText = currentText
+        let index = newText.index(newText.startIndex, offsetBy: insertPosition)
+        newText.insert(contentsOf: text, at: index)
+
+        // 値を設定
+        let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, newText as CFTypeRef)
+        return result == .success
+    }
+}
+```
+
+**メリット**:
+- クリップボードを一切汚さない
+- ユーザーのコピー済みデータを保護
+- 高速（クリップボード操作のオーバーヘッドなし）
+
+#### 2. キー入力シミュレーション
+
+AXValue が書き込み不可の場合、キーイベントを送信:
+
+```swift
+func insertViaKeyEvents(_ text: String) {
+    for char in text {
+        let keyCode = charToKeyCode(char)
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)
+        event?.post(tap: .cghidEventTap)
+        // key up も送信
+    }
+}
+```
+
+**注意**: 日本語入力や特殊文字は正しく処理されない可能性あり
+
+#### 3. クリップボード経由（フォールバック）
+
+上記が全て失敗した場合のみ使用:
+
+```swift
+func insertViaClipboard(_ text: String) async -> Bool {
+    // ⚠️ 最終手段: ユーザーに通知してから実行
+    showNotification("クリップボードを一時的に使用します")
+
+    // 詳細は Section 15.1 参照
+    return await ClipboardManager.shared.insertWithClipboard(text, to: targetElement)
+}
+```
+
+**使用条件**:
+- 方法1, 2が失敗した場合のみ
+- ユーザーに事前通知（設定で無効化可能）
+
+#### 対応アプリの互換性
+
+| アプリ種別 | AXValue | キー入力 | クリップボード | 備考 |
+|-----------|---------|----------|---------------|------|
+| ネイティブ TextField | ✅ | ✅ | ✅ | 最も互換性が高い |
+| Safari/Chrome テキストエリア | ✅ | ✅ | ✅ | |
+| VSCode | ❌ | ✅ | ✅ | Electron アプリ |
+| Terminal | ❌ | ⚠️ | ✅ | 特殊なキー処理 |
+| Slack | ✅ | ✅ | ✅ | |
+| Notion | ⚠️ | ✅ | ✅ | 一部制限あり |
 
 ### 10.4 権限
 
@@ -904,6 +986,9 @@ extension SPUUpdaterDelegate {
 ## 15. Security Considerations
 
 ### 15.1 クリップボード操作のセキュリティ
+
+> **注意**: クリップボードは**最終手段のフォールバック**としてのみ使用。
+> 通常は Section 10.3 の AXValue 直接設定またはキー入力シミュレーションを優先する。
 
 クリップボードフォールバック使用時のリスクと対策:
 
