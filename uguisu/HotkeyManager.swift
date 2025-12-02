@@ -15,6 +15,9 @@ class HotkeyManager {
     }
 
     func register() {
+        // First unregister if already registered to prevent duplicate taps
+        unregister()
+
         guard AXIsProcessTrusted() else {
             promptForAccessibilityPermission()
             return
@@ -38,7 +41,8 @@ class HotkeyManager {
             callback: callback,
             userInfo: refcon
         ) else {
-            print("Failed to create event tap. Please grant Accessibility permission.")
+            print("Failed to create event tap. This may happen even with Accessibility permission granted due to system restrictions.")
+            showEventTapCreationFailedAlert()
             return
         }
 
@@ -67,6 +71,15 @@ class HotkeyManager {
     }
 
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // Handle tap disabled event - macOS can disable event taps if they're too slow
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = eventTap {
+                print("Event tap was disabled, re-enabling...")
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+            return Unmanaged.passRetained(event)
+        }
+
         guard type == .keyDown else {
             return Unmanaged.passRetained(event)
         }
@@ -101,6 +114,20 @@ class HotkeyManager {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Open System Preferences")
         alert.addButton(withTitle: "Cancel")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func showEventTapCreationFailedAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Failed to Create Event Tap"
+        alert.informativeText = "uguisu could not register the global hotkey. This may be due to system restrictions. Please try restarting the app or re-granting Accessibility permission."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open System Preferences")
+        alert.addButton(withTitle: "OK")
 
         if alert.runModal() == .alertFirstButtonReturn {
             let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!

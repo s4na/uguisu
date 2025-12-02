@@ -17,6 +17,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "uguisu")
+            // Fallback if system symbol is not available
+            if button.image == nil {
+                button.title = "🎤"
+            }
         }
 
         let menu = NSMenu()
@@ -39,6 +43,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showOverlay() {
+        // If window is already visible, just bring it to front
+        if overlayWindowController?.window?.isVisible == true {
+            overlayWindowController?.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         overlayWindowController?.showWindow(nil)
     }
 }
