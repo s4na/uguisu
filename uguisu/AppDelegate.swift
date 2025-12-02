@@ -5,11 +5,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var hotkeyManager: HotkeyManager?
     private var overlayWindowController: OverlayWindowController?
+    private var updateManager: UpdateManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupHotkeyManager()
         setupOverlayWindow()
+        setupUpdateManager()
     }
 
     private func setupStatusItem() {
@@ -26,6 +28,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Show Overlay (⌥ + Space)", action: #selector(showOverlay), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem?.menu = menu
@@ -40,6 +44,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupOverlayWindow() {
         overlayWindowController = OverlayWindowController()
+    }
+
+    private func setupUpdateManager() {
+        updateManager = UpdateManager()
+        updateManager?.startAutomaticUpdateChecks()
+    }
+
+    @objc private func checkForUpdates() {
+        updateManager?.checkForUpdates()
     }
 
     @objc private func showOverlay() {
