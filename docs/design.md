@@ -35,6 +35,9 @@ STT モデルは複数（ローカル / クラウド問わず）を切り替え�
 
 * モバイル / Windows / Linux のサポート（初期スコープ外）
 * 会議録のような **長時間録音**（数十分〜数時間）はサポートしない
+  * **最大録音時間: 60秒**（ハードリミット）
+  * 60秒に達した場合: 自動的に録音を停止し、変換処理を開始
+  * 残り10秒時点でUIに警告表示
 * 高度な編集機能（Markdown プレビューやエディタ機能）は持たない
 * 独自の STT モデル学習・ファインチューニング機能の実装
 
@@ -50,9 +53,14 @@ STT モデルは複数（ローカル / クラウド問わず）を切り替え�
 
    * 「精度やレイテンシ、コストに応じて `Whisper-local` と `Cloud-STT` を切り替えたい。」
 
-3. **US-03: リアルタイムプレビュー**
+3. **US-03: 変換結果のプレビュー**
 
-   * 「しゃべっている途中から、リアルタイムでテキストが見えると安心できる。」
+   * **US-03a: ストリーミング対応モデルの場合**
+     * 「しゃべっている途中から、リアルタイムでテキストが見えると安心できる。」
+     * `supportsStreaming: true` のモデルで有効
+   * **US-03b: ストリーミング非対応モデルの場合**
+     * 「処理中...」インジケータ（スピナー + 経過時間）を表示
+     * 変換完了後にテキストを一括表示
 
 4. **US-04: 入力キャンセル**
 
@@ -73,7 +81,7 @@ STT モデルは複数（ローカル / クラウド問わず）を切り替え�
 ### 5.1 全体フロー（ハイレベル）
 
 1. ユーザーが任意のアプリでテキストカーソルを置いている状態
-2. グローバルショートカット（例: `⌘ + ⇧ + Space`）を押す
+2. グローバルショートカット（デフォルト: `⌥ + Space`）を押す
 3. uguisu のオーバーレイウィンドウが表示される
 
    * フローティング、中央 or カーソル近く
@@ -110,40 +118,65 @@ STT モデルは複数（ローカル / クラウド問わず）を切り替え�
   * デフォルト: 幅 ~600px, 高さ ~200–300px
   * リサイズ可能（将来対応）
 
-### 5.3 状態遷移（シンプル版）
+### 5.3 状態遷移
 
-* `Idle`（常駐・アイコンのみ）
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Idle ──[shortcut]──► OverlayOpening ──[animation done]──► Ready   │
+│    ▲                                                          │    │
+│    │                           ┌──────────────────────────────┘    │
+│    │                           ▼                                   │
+│    │    ┌─────────── ModelLoading ◄──[lazy load needed]           │
+│    │    │                  │                                       │
+│    │    │ [load complete]  │ [load error]                         │
+│    │    ▼                  ▼                                       │
+│    │  Ready ◄───────── Error                                      │
+│    │    │                  ▲                                       │
+│    │    │ [Space/auto]     │                                       │
+│    │    ▼                  │                                       │
+│    │  Recording ──[timeout:60s]──► Transcribing                   │
+│    │    │                              │                           │
+│    │    │ [Esc]                        │ [STT error]              │
+│    │    ▼                              ▼                           │
+│    │  Closing                       Retrying ──[max retries]──►   │
+│    │    │                              │                           │
+│    │    │                   [success]  │                           │
+│    │    │                       ┌──────┘                           │
+│    │    │                       ▼                                  │
+│    │    │                    Preview                               │
+│    │    │                       │                                  │
+│    │    │            [Enter]    │    [Esc]                        │
+│    │    │               ▼       │      ▼                          │
+│    │    │         InsertAndClose│   Closing                       │
+│    │    │               │       │      │                          │
+│    └────┴───────────────┴───────┴──────┘                          │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-  * グローバルショートカット → `OverlayOpening`
-* `OverlayOpening`
+#### 状態詳細
 
-  * ウィンドウ表示 → `Ready`
-* `Ready`
+| 状態 | 説明 | 遷移条件 |
+|------|------|----------|
+| `Idle` | 常駐・メニューバーアイコンのみ | ショートカット押下 → `OverlayOpening` |
+| `OverlayOpening` | ウィンドウ表示アニメーション中 | アニメーション完了（~50ms）→ `Ready` or `ModelLoading` |
+| `ModelLoading` | 遅延ロードモデルの読み込み中 | ロード完了 → `Ready`、エラー → `Error` |
+| `Ready` | 録音待機状態 | `Space` or auto-start → `Recording`、`Esc` → `Closing` |
+| `Recording` | 録音中 | `Space` or タイムアウト（60秒）→ `Transcribing`、`Esc` → `Closing` |
+| `Transcribing` | STT 変換中 | 成功 → `Preview`、エラー → `Retrying` or `Error` |
+| `Retrying` | リトライ中（指数バックオフ） | 成功 → `Preview`、最大リトライ超過 → `Error` |
+| `Preview` | 変換結果表示・編集可能 | `Enter` → `InsertAndClose`、`Esc` → `Closing` |
+| `InsertAndClose` | テキスト挿入処理中 | 成功 → `Idle`、失敗 → `Error`（ウィンドウは閉じる） |
+| `Error` | エラー表示 | ユーザー確認（Enter/Esc）→ `Idle` |
+| `Closing` | ウィンドウ閉じ中 | 完了 → `Idle` |
 
-  * `Space` or auto-start → `Recording`
-  * `Esc` → `Closing`
-* `Recording`
+#### タイムアウト値
 
-  * `Space` orタイムアウト → `Transcribing`
-  * `Esc` → `Closing`（録音破棄）
-* `Transcribing`
-
-  * STT 完了 → `Preview`
-  * エラー → `Error`
-* `Preview`
-
-  * `Enter` → `InsertAndClose`
-  * `Esc` → `Closing`
-* `InsertAndClose`
-
-  * テキスト挿入成功 → `Idle`
-  * 失敗 → `Error`（ただしウィンドウは閉じる）
-* `Error`
-
-  * ユーザー確認後 → `Idle`
-* `Closing`
-
-  * ウィンドウ閉じる → `Idle`
+| 状態 | タイムアウト | 動作 |
+|------|-------------|------|
+| `Recording` | 60秒 | 自動停止 → `Transcribing` |
+| `Transcribing` | 30秒 | タイムアウトエラー → `Retrying` |
+| `Retrying` | 各リトライ: 1s, 2s, 4s（指数バックオフ） | 最大3回 → `Error` |
+| `ModelLoading` | 10秒 | ロードタイムアウト → `Error` |
 
 ---
 
@@ -155,13 +188,35 @@ STT モデルは複数（ローカル / クラウド問わず）を切り替え�
 * 設定画面からショートカット変更可能
 * ショートカットが既存アプリのショートカットと衝突した場合の考慮（可能なら検出）
 
+#### デフォルトショートカット
+
+**推奨: `⌥ Option + Space`**
+
+| 候補 | 評価 | 備考 |
+|------|------|------|
+| `⌥ + Space` | ⭐⭐⭐ 推奨 | 片手で押しやすい、主要アプリと衝突少ない |
+| `⌘⇧ + Space` | ⭐⭐ | Spotlight（`⌘ + Space`）と似ていて覚えやすいが、一部アプリで使用 |
+| `⌃ + Space` | ⭐ | 入力ソース切替とデフォルトで衝突（macOS設定で変更可能） |
+| `Fn + Fn`（ダブルタップ） | ⭐⭐ | macOS の音声入力と衝突する可能性 |
+| `⌘⌥ + V` | ⭐⭐ | 「Voice」の V で覚えやすいが、両手が必要 |
+
+**選定理由（`⌥ + Space`）**:
+* **片手操作**: 左手だけで押せる（右手はマウス/トラックパッドに置いたまま）
+* **衝突が少ない**: Spotlight（`⌘Space`）、入力切替（`⌃Space`）と異なる修飾キー
+* **直感的**: Space = 音声 → スペース（話すスペース）のメタファー
+* **Raycast/Alfred ユーザー**: `⌥Space` は比較的空いていることが多い
+
+**注意**: ユーザーが別のアプリで `⌥Space` を使用している場合は、初回起動時に検出して代替を提案
+
 ### 6.2 音声録音
 
 * システムのデフォルトマイクを利用
 * サンプリング: 16kHz or 44.1kHz（モデルに合わせて変換）
 * フォーマット: PCM (WAV) / その他モデル仕様に合わせる
-* 録音時間の上限（例: 30秒〜60秒）
-* 録音中は視覚的フィードバック（波形 or レベルメーター）
+* **録音時間の上限: 60秒**（ハードリミット、Section 3 参照）
+  * 50秒経過時: UI に「残り10秒」警告表示
+  * 60秒到達時: 自動停止 → `Transcribing` 状態へ遷移
+* 録音中は視覚的フィードバック（波形 or レベルメーター + 経過時間表示）
 
 ### 6.3 STT モデル呼び出し
 
@@ -172,6 +227,47 @@ STT モデルは複数（ローカル / クラウド問わず）を切り替え�
   * クラウド API（例: 任意の STT サービス）
 * 同期 / 非同期呼び出しを統一的に扱えるよう設計
 * エラー種別をモデルごとにラップして共通型で返す
+
+#### ストリーミング vs 一括変換
+
+モデルの `supportsStreaming` フラグに基づいて自動的に最適な方式を選択:
+
+| モデル種別 | 方式 | UX |
+|-----------|------|-----|
+| ストリーミング対応 | リアルタイム変換 | 話しながらテキストが逐次表示 |
+| 一括変換のみ | 録音完了後に変換 | 「処理中...」表示 → 完了後に一括表示 |
+| 一括変換（長文） | チャンク分割変換 | 10秒ごとに分割して順次変換・表示 |
+
+```swift
+class STTEngine {
+    func transcribe(audio: AudioBuffer, provider: STTModelProvider) async throws -> String {
+        if provider.supportsStreaming {
+            // ストリーミング対応: リアルタイム変換
+            return try await streamingTranscribe(audio: audio, provider: provider)
+        } else if audio.duration > 10.0 {
+            // 長文の場合: 10秒チャンクで分割変換
+            return try await chunkedTranscribe(audio: audio, provider: provider, chunkDuration: 10.0)
+        } else {
+            // 短文: 一括変換
+            return try await batchTranscribe(audio: audio, provider: provider)
+        }
+    }
+
+    private func chunkedTranscribe(audio: AudioBuffer, provider: STTModelProvider, chunkDuration: TimeInterval) async throws -> String {
+        var results: [String] = []
+        let chunks = audio.split(every: chunkDuration)
+
+        for chunk in chunks {
+            let text = try await provider.transcribe(audioData: chunk.data, language: nil, onPartialResult: nil)
+            results.append(text)
+            // チャンクごとに UI を更新（部分結果を表示）
+            await MainActor.run { updatePartialResult(results.joined()) }
+        }
+
+        return results.joined()
+    }
+}
+```
 
 ### 6.4 テキスト表示と編集
 
@@ -371,6 +467,51 @@ enum BackendType: String, Codable {
   * 既存ライブラリ（例: MASShortcut 相当の実装を自前/OSSで）
 * ショートカット変更時に一度登録解除 → 再登録
 
+#### Event Tap と権限要件
+
+**重要**: `CGEventTap` はアクセシビリティ権限が必要。権限がない場合は `nil` が返される。
+
+```swift
+class HotkeyManager {
+    func setupEventTap() -> Bool {
+        // 権限チェック
+        let trusted = AXIsProcessTrusted()
+        guard trusted else {
+            // 権限がない場合は設定画面を開く
+            promptForAccessibilityPermission()
+            return false
+        }
+
+        // Event Tap 作成
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
+            callback: eventCallback,
+            userInfo: nil
+        ) else {
+            // 権限があるのに失敗 = システムエラー
+            Logger.shared.log(.error, "Failed to create event tap")
+            return false
+        }
+
+        // Run loop に追加
+        let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+
+        return true
+    }
+}
+```
+
+* **起動時の権限チェックフロー**:
+  1. `AXIsProcessTrusted()` でアクセシビリティ権限を確認
+  2. 権限がない場合: 説明ダイアログを表示 → システム環境設定を開く
+  3. 権限付与後: Event Tap を登録
+  4. 権限が拒否された場合: アプリの主要機能は使用不可と明示
+
 ### 10.2 フロントアプリ特定
 
 * `NSWorkspace.shared.frontmostApplication`
@@ -378,17 +519,99 @@ enum BackendType: String, Codable {
 
 ### 10.3 テキスト挿入戦略
 
-1. **理想的パス**
+**基本方針**: クリップボードを汚さず、直接テキストフィールドに入力する
 
-   * アクセシビリティ API で対象テキストフィールドの `AXValue` を取得・更新
-   * カーソル位置を考慮した挿入（将来的な高度機能）
+#### 優先順位
 
-2. **フォールバックパス**
+```
+1. AXValue 直接設定（最優先）
+   ↓ 失敗
+2. AXSelectedText + キー入力シミュレーション
+   ↓ 失敗
+3. クリップボード経由（最終手段）
+```
 
-   * 現在のクリップボード内容を退避
-   * クリップボードに挿入テキストをセット
-   * `Cmd+V` キーイベントを合成して送る
-   * クリップボードを元に戻す
+#### 1. AXValue 直接設定（推奨）
+
+アクセシビリティ API でテキストフィールドの値を直接更新:
+
+```swift
+class TextInsertionService {
+    func insertText(_ text: String, to element: AXUIElement) -> Bool {
+        // 現在のテキストを取得
+        var currentValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &currentValue) == .success,
+              let currentText = currentValue as? String else {
+            return false
+        }
+
+        // カーソル位置を取得
+        var selectedRange: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRange)
+
+        // 新しいテキストを構築（カーソル位置に挿入）
+        let insertPosition = getInsertPosition(from: selectedRange) ?? currentText.count
+        var newText = currentText
+        let index = newText.index(newText.startIndex, offsetBy: insertPosition)
+        newText.insert(contentsOf: text, at: index)
+
+        // 値を設定
+        let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, newText as CFTypeRef)
+        return result == .success
+    }
+}
+```
+
+**メリット**:
+- クリップボードを一切汚さない
+- ユーザーのコピー済みデータを保護
+- 高速（クリップボード操作のオーバーヘッドなし）
+
+#### 2. キー入力シミュレーション
+
+AXValue が書き込み不可の場合、キーイベントを送信:
+
+```swift
+func insertViaKeyEvents(_ text: String) {
+    for char in text {
+        let keyCode = charToKeyCode(char)
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)
+        event?.post(tap: .cghidEventTap)
+        // key up も送信
+    }
+}
+```
+
+**注意**: 日本語入力や特殊文字は正しく処理されない可能性あり
+
+#### 3. クリップボード経由（フォールバック）
+
+上記が全て失敗した場合のみ使用:
+
+```swift
+func insertViaClipboard(_ text: String) async -> Bool {
+    // ⚠️ 最終手段: ユーザーに通知してから実行
+    showNotification("クリップボードを一時的に使用します")
+
+    // 詳細は Section 15.1 参照
+    return await ClipboardManager.shared.insertWithClipboard(text, to: targetElement)
+}
+```
+
+**使用条件**:
+- 方法1, 2が失敗した場合のみ
+- ユーザーに事前通知（設定で無効化可能）
+
+#### 対応アプリの互換性
+
+| アプリ種別 | AXValue | キー入力 | クリップボード | 備考 |
+|-----------|---------|----------|---------------|------|
+| ネイティブ TextField | ✅ | ✅ | ✅ | 最も互換性が高い |
+| Safari/Chrome テキストエリア | ✅ | ✅ | ✅ | |
+| VSCode | ❌ | ✅ | ✅ | Electron アプリ |
+| Terminal | ❌ | ⚠️ | ✅ | 特殊なキー処理 |
+| Slack | ✅ | ✅ | ✅ | |
+| Notion | ⚠️ | ✅ | ✅ | 一部制限あり |
 
 ### 10.4 権限
 
@@ -433,6 +656,65 @@ enum BackendType: String, Codable {
 * モデルの追加は UI から行えるが、裏側では JSON 定義として保存
 * （将来）設定ファイルを外部から読み込んで自動登録する機能も検討
 * `STTModelProvider` を新規追加するだけで新しい STT サービスを統合できるようにする
+
+### 12.1 設定ファイルのバージョニング
+
+```swift
+struct AppConfig: Codable {
+    static let currentVersion = 2
+
+    let version: Int
+    let models: [STTModelConfig]
+    let preferences: UserPreferences
+
+    init() {
+        self.version = Self.currentVersion
+        self.models = []
+        self.preferences = UserPreferences()
+    }
+}
+```
+
+### 12.2 マイグレーション戦略
+
+設定ファイルのバージョンアップ時に破壊的変更を安全に処理:
+
+```swift
+class ConfigMigrator {
+    static func migrate(from data: Data) throws -> AppConfig {
+        let decoder = JSONDecoder()
+
+        // まずバージョンのみを取得
+        struct VersionOnly: Decodable { let version: Int? }
+        let versionInfo = try decoder.decode(VersionOnly.self, from: data)
+        let version = versionInfo.version ?? 1
+
+        switch version {
+        case 1:
+            let v1 = try decoder.decode(AppConfigV1.self, from: data)
+            return migrateV1toV2(v1)
+        case 2:
+            return try decoder.decode(AppConfig.self, from: data)
+        default:
+            throw ConfigError.unsupportedVersion(version)
+        }
+    }
+
+    private static func migrateV1toV2(_ v1: AppConfigV1) -> AppConfig {
+        // V1 → V2 のフィールドマッピング
+        // 例: 古いフィールド名を新しい名前に変換
+        return AppConfig(
+            version: 2,
+            models: v1.sttModels.map { convertModel($0) },
+            preferences: convertPreferences(v1)
+        )
+    }
+}
+```
+
+* **バックアップ**: マイグレーション前に自動バックアップを作成
+* **ロールバック**: マイグレーション失敗時は元の設定を維持
+* **ログ**: マイグレーションの成否をログに記録
 
 ---
 
@@ -530,6 +812,78 @@ GitHub Actions でリリースを自動化:
 6. GitHub Release を作成し、アセットをアップロード
 7. Homebrew Tap の Cask 定義を自動更新（SHA256 とバージョン）
 
+#### Secrets 管理
+
+```yaml
+# .github/workflows/release.yml
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+env:
+  APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+  NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
+  NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
+  KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # 一時 Keychain を作成
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+
+          # 証明書をインポート
+          echo "$CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+          security import certificate.p12 -k build.keychain \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+
+      - name: Build and Sign
+        run: |
+          xcodebuild archive -scheme uguisu -archivePath build/uguisu.xcarchive
+          xcodebuild -exportArchive -archivePath build/uguisu.xcarchive \
+            -exportPath build/export -exportOptionsPlist ExportOptions.plist
+
+      - name: Notarize
+        run: |
+          xcrun notarytool submit build/export/uguisu.app.zip \
+            --apple-id "$NOTARIZATION_APPLE_ID" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            build/uguisu-*.dmg
+            build/uguisu-*.zip
+```
+
+**必要な Secrets**:
+| Secret 名 | 説明 |
+|-----------|------|
+| `APPLE_DEVELOPER_ID` | Developer ID（例: `Developer ID Application: Name (TEAMID)`） |
+| `APPLE_TEAM_ID` | Apple Team ID |
+| `NOTARIZATION_APPLE_ID` | App Store Connect のメールアドレス |
+| `NOTARIZATION_PASSWORD` | App-specific password |
+| `APPLE_CERTIFICATE_BASE64` | .p12 証明書を base64 エンコードしたもの |
+| `APPLE_CERTIFICATE_PASSWORD` | 証明書のパスワード |
+| `KEYCHAIN_PASSWORD` | 一時 Keychain 用のパスワード |
+
 ### 14.4 署名 & Notarization
 
 * **必須**: Apple Developer Program への登録（年間 $99）
@@ -544,11 +898,97 @@ GitHub Actions でリリースを自動化:
 * マイクアクセス権限
 * アクセシビリティ権限（テキスト挿入用）
 
+### 14.6 自動アップデート
+
+[Sparkle](https://sparkle-project.org/) フレームワークを使用した自動アップデート機能:
+
+#### 基本設定
+
+```swift
+// AppDelegate.swift
+import Sparkle
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // 自動アップデートチェックを有効化
+        updaterController.updater.automaticallyChecksForUpdates = true
+        updaterController.updater.updateCheckInterval = 86400 // 24時間
+    }
+}
+```
+
+#### Appcast フィード
+
+```xml
+<!-- https://example.com/appcast.xml -->
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>uguisu Updates</title>
+    <item>
+      <title>Version 1.1.0</title>
+      <sparkle:version>1.1.0</sparkle:version>
+      <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Mon, 01 Jan 2025 12:00:00 +0000</pubDate>
+      <enclosure
+        url="https://github.com/s4na/uguisu/releases/download/v1.1.0/uguisu-1.1.0.dmg"
+        sparkle:edSignature="..."
+        length="12345678"
+        type="application/octet-stream"/>
+      <description><![CDATA[
+        <h2>What's New</h2>
+        <ul>
+          <li>New feature: ...</li>
+          <li>Bug fix: ...</li>
+        </ul>
+      ]]></description>
+    </item>
+  </channel>
+</rss>
+```
+
+#### アップデートポリシー
+
+| 種別 | 動作 | ユーザー確認 |
+|------|------|-------------|
+| 通常アップデート | バックグラウンドでダウンロード、次回起動時に適用 | 必要 |
+| セキュリティ修正 | 即時通知、強く推奨 | 必要（スキップ不可） |
+| 緊急セキュリティ | 強制アップデート | 起動時にブロック |
+
+```swift
+// 強制アップデートの判定
+extension SPUUpdaterDelegate {
+    func updater(_ updater: SPUUpdater, shouldPostpone update: SUAppcastItem, until date: Date) -> Bool {
+        // criticalUpdate フラグがある場合は延期不可
+        if update.isCriticalUpdate {
+            return false
+        }
+        return true
+    }
+}
+```
+
+#### リリースノート表示
+
+* アップデート確認時にリリースノートを表示
+* 日本語/英語のローカライズ対応
+* 「今すぐ更新」「後で」「スキップ」のオプション
+
 ---
 
 ## 15. Security Considerations
 
 ### 15.1 クリップボード操作のセキュリティ
+
+> **注意**: クリップボードは**最終手段のフォールバック**としてのみ使用。
+> 通常は Section 10.3 の AXValue 直接設定またはキー入力シミュレーションを優先する。
 
 クリップボードフォールバック使用時のリスクと対策:
 
@@ -557,36 +997,81 @@ GitHub Actions でリリースを自動化:
   * クリップボード履歴ツールによる機密データの露出
   * 復元失敗時に音声テキストがクリップボードに残る
 
-* **対策**:
+* **対策**（Swift Concurrency 対応版）:
   ```swift
-  class ClipboardManager {
-      private let lock = NSLock()
+  actor ClipboardManager {
+      private var isOperating = false
 
-      func insertWithClipboard(_ text: String) {
-          lock.lock()
-          defer { lock.unlock() }
+      func insertWithClipboard(_ text: String, to targetElement: AXUIElement?) async -> ClipboardResult {
+          guard !isOperating else {
+              return .busy
+          }
+          isOperating = true
+          defer { isOperating = false }
 
           let pasteboard = NSPasteboard.general
           let originalContents = pasteboard.string(forType: .string)
+          let originalLength = await getTextLength(of: targetElement)
 
           pasteboard.clearContents()
           pasteboard.setString(text, forType: .string)
 
           // Cmd+V を送信
-          sendPasteKeystroke()
+          await sendPasteKeystroke()
 
-          // ペースト完了を待機（100ms）
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-              pasteboard.clearContents()
-              if let original = originalContents {
-                  pasteboard.setString(original, forType: .string)
-              }
+          // ペースト完了を検証
+          let pasteSucceeded = await waitForPasteCompletion(
+              targetElement: targetElement,
+              expectedLength: originalLength + text.count,
+              timeout: 0.5
+          )
+
+          // クリップボード復元
+          pasteboard.clearContents()
+          if let original = originalContents {
+              pasteboard.setString(original, forType: .string)
           }
+
+          return pasteSucceeded ? .success : .pasteTimeout
+      }
+
+      /// ペースト完了をポーリングで検証
+      private func waitForPasteCompletion(
+          targetElement: AXUIElement?,
+          expectedLength: Int,
+          timeout: TimeInterval
+      ) async -> Bool {
+          let startTime = Date()
+          let pollInterval: TimeInterval = 0.05 // 50ms
+
+          while Date().timeIntervalSince(startTime) < timeout {
+              let currentLength = await getTextLength(of: targetElement)
+              if currentLength >= expectedLength {
+                  return true
+              }
+              try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+          }
+          return false
+      }
+
+      private func getTextLength(of element: AXUIElement?) async -> Int {
+          guard let element = element else { return 0 }
+          var value: CFTypeRef?
+          let result = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value)
+          guard result == .success, let str = value as? String else { return 0 }
+          return str.count
       }
   }
+
+  enum ClipboardResult {
+      case success
+      case busy
+      case pasteTimeout
+  }
   ```
-  * アトミックな操作のためロックを使用
-  * ペースト完了を確認してから復元
+  * **actor を使用**: Swift Concurrency との整合性、スレッドセーフな設計
+  * **ペースト完了の検証**: テキスト長の変化をポーリングで検出
+  * **タイムアウト**: 0.5秒で検証を打ち切り
   * 失敗時はユーザーに「クリップボードが上書きされました」と通知
 
 ### 15.2 API キー管理
@@ -619,6 +1104,25 @@ GitHub Actions でリリースを自動化:
   * `defer` ブロックでエラー時も確実にクリーンアップ
   * swap/core dump への漏洩防止のため一時ファイルは作成しない
 
+* **一時ファイル**:
+  * ディスク I/O を減らすため、**可能な限りオンメモリで処理**
+  * 一時ファイルが必要な場合（大容量音声など）は暗号化して保存し、処理後即削除
+  * `/tmp` や `NSTemporaryDirectory()` への書き込みは原則禁止
+
+* **ログ出力の制限**（プライバシー保護）:
+  ```swift
+  // ❌ 絶対にログ出力しない
+  Logger.log("Audio data: \(audioBuffer.data)")
+  Logger.log("Transcribed text: \(result)")
+
+  // ✅ 許可されるログ
+  Logger.log("Recording started, duration: \(duration)s")
+  Logger.log("Transcription completed, length: \(text.count) chars")
+  Logger.log("STT model: \(modelName), latency: \(latency)ms")
+  ```
+  * デバッグログであっても、音声データそのものや変換後のテキスト内容は**絶対に出力しない**
+  * 許可される情報: 処理時間、データ長、モデル名、エラーコード（内容は除く）
+
 * **データ保持ポリシー**:
   | 状態 | 音声データ | テキストデータ |
   |------|-----------|---------------|
@@ -648,6 +1152,20 @@ GitHub Actions でリリースを自動化:
 ### 16.1 状態遷移のスレッドセーフティ
 
 ```swift
+enum AppState: Equatable {
+    case idle
+    case overlayOpening
+    case modelLoading      // 追加: 遅延ロード中
+    case ready
+    case recording
+    case transcribing
+    case retrying(attempt: Int)  // 追加: リトライ中
+    case preview
+    case insertAndClose
+    case error(AppError)
+    case closing
+}
+
 actor AppStateManager {
     private(set) var currentState: AppState = .idle
 
@@ -659,15 +1177,35 @@ actor AppStateManager {
     }
 
     private func isValidTransition(from: AppState, to: AppState) -> Bool {
-        // 有効な遷移のみ許可
+        // 有効な遷移のみ許可（Section 5.3 の状態遷移図と整合）
         switch (from, to) {
         case (.idle, .overlayOpening),
+             // OverlayOpening からの遷移
              (.overlayOpening, .ready),
-             (.ready, .recording), (.ready, .closing),
-             (.recording, .transcribing), (.recording, .closing),
-             (.transcribing, .preview), (.transcribing, .error),
-             (.preview, .insertAndClose), (.preview, .closing),
-             (.insertAndClose, .idle), (.insertAndClose, .error),
+             (.overlayOpening, .modelLoading),
+             // ModelLoading からの遷移
+             (.modelLoading, .ready),
+             (.modelLoading, .error),
+             // Ready からの遷移
+             (.ready, .recording),
+             (.ready, .closing),
+             // Recording からの遷移
+             (.recording, .transcribing),
+             (.recording, .closing),
+             // Transcribing からの遷移
+             (.transcribing, .preview),
+             (.transcribing, .retrying),
+             (.transcribing, .error),
+             // Retrying からの遷移
+             (.retrying, .preview),
+             (.retrying, .error),
+             // Preview からの遷移
+             (.preview, .insertAndClose),
+             (.preview, .closing),
+             // InsertAndClose からの遷移
+             (.insertAndClose, .idle),
+             (.insertAndClose, .error),
+             // Error/Closing からの遷移
              (.error, .idle),
              (.closing, .idle):
             return true
@@ -719,7 +1257,52 @@ extension STTError {
 3. **クリップボード復元失敗時**: 「クリップボードにコピーしました」通知で終了
 4. **マイク切断時**: 録音済みデータを保持し、再接続を促す
 
-### 16.5 フォーカス管理
+### 16.5 オフラインモード
+
+クラウド STT サービスが利用できない場合の動作:
+
+```swift
+class NetworkMonitor {
+    private let monitor = NWPathMonitor()
+    @Published var isOnline = true
+
+    func startMonitoring() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                self?.isOnline = path.status == .satisfied
+            }
+        }
+        monitor.start(queue: DispatchQueue.global())
+    }
+}
+
+class STTEngine {
+    func selectBestAvailableModel() -> STTModelProvider {
+        if !networkMonitor.isOnline {
+            // オフライン時はローカルモデルのみ表示
+            return getLocalModel() ?? showOfflineWarning()
+        }
+        return getPreferredModel()
+    }
+}
+```
+
+* **オフライン検出**:
+  * `NWPathMonitor` でネットワーク状態を監視
+  * クラウドモデル選択時にオフラインなら警告表示
+
+* **オフライン時の動作**:
+  | 状況 | 動作 |
+  |------|------|
+  | ローカルモデルあり | ローカルモデルを自動選択 |
+  | ローカルモデルなし | 「オフラインです。ローカルモデルをインストールしてください」と表示 |
+  | 録音中にオフライン化 | 録音を継続し、変換時にローカルモデルへフォールバック |
+
+* **オフライン→オンライン復帰時**:
+  * 自動的にクラウドモデルが利用可能に
+  * 設定で「常にローカル優先」を選択可能
+
+### 16.6 フォーカス管理
 
 ```swift
 class FocusManager {
@@ -811,7 +1394,51 @@ class FocusManager {
       }
   ```
 
-### 17.4 バッテリー最適化
+### 17.4 GPU 検出とフォールバック
+
+```swift
+class GPUCapabilityManager {
+    enum GPUTier {
+        case highPerformance  // 専用 GPU または M1 Pro/Max/Ultra
+        case standard         // M1/M2 標準、Intel 統合 GPU
+        case unavailable      // GPU アクセス不可
+    }
+
+    static func detectGPUTier() -> GPUTier {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            return .unavailable
+        }
+
+        // Apple Silicon の高性能チップを検出
+        if device.supportsFamily(.apple7) {
+            // recommendedMaxWorkingSetSize で VRAM を推定
+            let vram = device.recommendedMaxWorkingSetSize
+            if vram >= 16 * 1024 * 1024 * 1024 { // 16GB+
+                return .highPerformance
+            }
+        }
+        return .standard
+    }
+
+    static func recommendedModel(for tier: GPUTier) -> String {
+        switch tier {
+        case .highPerformance:
+            return "whisper-large"
+        case .standard:
+            return "whisper-base"
+        case .unavailable:
+            return "cloud-stt" // GPU なしはクラウド推奨
+        }
+    }
+}
+```
+
+* **GPU 不可時の動作**:
+  * 起動時に GPU 可用性を検出
+  * GPU が使用不可の場合、ユーザーに通知し CPU モードまたはクラウド STT を推奨
+  * Whisper モデルは CPU フォールバックを自動的に使用
+
+### 17.5 バッテリー最適化
 
 * **電源状態の監視**:
   * バッテリー駆動時: GPU 使用を控え CPU のみで処理
@@ -822,7 +1449,7 @@ class FocusManager {
   * アイドル時は App Nap を許可
   * ショートカット監視のみ維持
 
-### 17.5 オーバーレイウィンドウの最適化
+### 17.6 オーバーレイウィンドウの最適化
 
 * バックグラウンドでウィンドウを非表示状態で事前作成
 * ウィンドウ表示時はアニメーションを最小化
@@ -946,7 +1573,7 @@ class OverlayWindowUITests: XCTestCase {
 name: Test
 on: [push, pull_request]
 jobs:
-  test:
+  unit-test:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -956,11 +1583,163 @@ jobs:
         run: xcodebuild test -scheme uguisu -destination 'platform=macOS'
       - name: Upload Coverage
         uses: codecov/codecov-action@v3
+
+  ui-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: UI Tests
+        run: xcodebuild test -scheme uguisu-UITests -destination 'platform=macOS'
+
+  integration-test:
+    needs: [unit-test]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Integration Tests
+        run: xcodebuild test -scheme uguisu-IntegrationTests -destination 'platform=macOS'
 ```
 
 ---
 
-## 19. Open Questions / TODO
+## 19. Logging & Diagnostics
+
+### 19.1 ログレベルと出力
+
+```swift
+enum LogLevel: Int, Comparable {
+    case debug = 0
+    case info = 1
+    case warning = 2
+    case error = 3
+
+    static func < (lhs: LogLevel, rhs: LogLevel) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+class Logger {
+    static let shared = Logger()
+    var minLevel: LogLevel = .info
+
+    func log(_ level: LogLevel, _ message: String, file: String = #file, function: String = #function) {
+        guard level >= minLevel else { return }
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let entry = "[\(timestamp)] [\(level)] \(function): \(message)"
+
+        // os_log を使用（システムログに統合）
+        os_log("%{public}@", log: .default, type: level.osLogType, entry)
+
+        // デバッグビルドではコンソールにも出力
+        #if DEBUG
+        print(entry)
+        #endif
+    }
+}
+```
+
+### 19.2 構造化ロギング
+
+```swift
+struct LogEvent: Codable {
+    let timestamp: Date
+    let level: String
+    let category: String
+    let message: String
+    let metadata: [String: String]?
+
+    // 音声データやテキストは絶対にログに含めない
+}
+
+enum LogCategory: String {
+    case hotkey = "Hotkey"
+    case audio = "Audio"
+    case stt = "STT"
+    case insertion = "Insertion"
+    case ui = "UI"
+    case error = "Error"
+}
+```
+
+### 19.3 ユーザー向け診断画面
+
+設定画面から「診断」タブでアクセス可能:
+
+| 項目 | 表示内容 |
+|------|----------|
+| 最近の操作 | 直近10件の操作結果（成功/失敗） |
+| モデル性能 | 各モデルの平均レイテンシ、成功率 |
+| 権限状態 | マイク/アクセシビリティ権限の状態 |
+| システム情報 | macOS バージョン、メモリ使用量 |
+
+```swift
+struct DiagnosticsView: View {
+    @StateObject var diagnostics = DiagnosticsManager.shared
+
+    var body: some View {
+        List {
+            Section("最近の操作") {
+                ForEach(diagnostics.recentOperations) { op in
+                    HStack {
+                        Image(systemName: op.success ? "checkmark.circle" : "xmark.circle")
+                            .foregroundColor(op.success ? .green : .red)
+                        VStack(alignment: .leading) {
+                            Text(op.description)
+                            Text(op.timestamp, style: .relative)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+
+            Section("権限") {
+                PermissionStatusRow(name: "マイク", status: diagnostics.micPermission)
+                PermissionStatusRow(name: "アクセシビリティ", status: diagnostics.axPermission)
+            }
+        }
+    }
+}
+```
+
+### 19.4 診断情報のエクスポート
+
+トラブルシューティング用に診断情報をエクスポート:
+
+* **含める情報**:
+  * アプリバージョン、macOS バージョン
+  * 登録済みモデル一覧（API キーは除外）
+  * エラーログ（直近100件）
+  * パフォーマンスメトリクス
+
+* **除外する情報**（プライバシー保護）:
+  * 音声データ
+  * 変換されたテキスト
+  * API キー
+  * 挿入先アプリの詳細
+
+```swift
+func exportDiagnostics() -> URL {
+    let report = DiagnosticsReport(
+        appVersion: Bundle.main.version,
+        osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+        models: SettingsStore.shared.models.map { $0.sanitized },
+        recentErrors: Logger.shared.recentErrors(limit: 100),
+        metrics: PerformanceMetrics.shared.summary
+    )
+
+    let data = try! JSONEncoder().encode(report)
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("uguisu-diagnostics-\(Date().timeIntervalSince1970).json")
+    try! data.write(to: url)
+    return url
+}
+```
+
+---
+
+## 20. Open Questions / TODO
 
 1. **STT モデルの具体的な候補**
 
@@ -973,13 +1752,10 @@ jobs:
 3. **テキスト挿入の互換性調査**
 
    * ブラウザ、VSCode、IntelliJ、Slack、Notion 等での挙動
-4. **ログとデバッグ**
-
-   * どこまで詳細ログを持つか（プライバシーとのバランス）
-5. **ライセンス**
+4. **ライセンス**
 
    * ローカル STT ライブラリや依存 OSS のライセンス確認
-6. **Homebrew 公式 Cask への登録**
+5. **Homebrew 公式 Cask への登録**
 
    * 一定のユーザー数・スター数が必要（目安: 30+ stars, 30+ forks, or 75+ watchers）
    * 初期は自前 Tap で運用し、条件を満たしたら公式へ PR
