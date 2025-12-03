@@ -125,18 +125,21 @@ class TextInsertionService {
         var insertPosition = currentText.count
         var selectionLength = 0
 
-        if let range = selectedRange {
+        if let range = selectedRange,
+           let axValue = range as? AXValue {
             var cfRange = CFRange()
-            if AXValueGetValue(range as! AXValue, .cfRange, &cfRange) {
+            if AXValueGetValue(axValue, .cfRange, &cfRange) {
                 insertPosition = cfRange.location
                 selectionLength = cfRange.length
             }
         }
 
-        // Build new text
+        // Build new text with safe bounds checking
         var newText = currentText
-        let startIndex = newText.index(newText.startIndex, offsetBy: min(insertPosition, newText.count))
-        let endIndex = newText.index(startIndex, offsetBy: min(selectionLength, newText.count - insertPosition))
+        let safeInsertPosition = min(max(0, insertPosition), newText.count)
+        let safeSelectionLength = min(max(0, selectionLength), newText.count - safeInsertPosition)
+        let startIndex = newText.index(newText.startIndex, offsetBy: safeInsertPosition)
+        let endIndex = newText.index(startIndex, offsetBy: safeSelectionLength)
         newText.replaceSubrange(startIndex..<endIndex, with: text)
 
         // Set new value
