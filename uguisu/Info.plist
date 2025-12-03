@@ -30,5 +30,7 @@
     <string>NSApplication</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>uguisu needs microphone access for voice-to-text input.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>uguisu needs speech recognition to convert your voice to text.</string>
 </dict>
 </plist>

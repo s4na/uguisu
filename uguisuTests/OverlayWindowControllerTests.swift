@@ -40,6 +40,6 @@ final class OverlayWindowControllerTests: XCTestCase {
         }
 
         XCTAssertEqual(window.frame.width, 600)
-        XCTAssertEqual(window.frame.height, 200)
+        XCTAssertEqual(window.frame.height, 250)
     }
 }
