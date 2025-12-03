@@ -11,8 +11,6 @@
 		A1000001234567890000002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001234567890000012 /* AppDelegate.swift */; };
 		A1000001234567890000003 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001234567890000013 /* HotkeyManager.swift */; };
 		A1000001234567890000004 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001234567890000014 /* OverlayWindowController.swift */; };
-		A1000001234567890000005 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A1000001234567890000099 /* Sparkle */; };
-		A1000001234567890000006 /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001234567890000017 /* UpdateManager.swift */; };
 		A2000001234567890000001 /* HotkeyManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001234567890000011 /* HotkeyManagerTests.swift */; };
 		A2000001234567890000002 /* OverlayWindowControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001234567890000012 /* OverlayWindowControllerTests.swift */; };
 		A2000001234567890000003 /* AppDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001234567890000013 /* AppDelegateTests.swift */; };
@@ -36,7 +34,6 @@
 		A1000001234567890000014 /* OverlayWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowController.swift; sourceTree = "<group>"; };
 		A1000001234567890000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1000001234567890000016 /* uguisu.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = uguisu.entitlements; sourceTree = "<group>"; };
-		A1000001234567890000017 /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
 		A2000001234567890000010 /* uguisuTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = uguisuTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000001234567890000011 /* HotkeyManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManagerTests.swift; sourceTree = "<group>"; };
 		A2000001234567890000012 /* OverlayWindowControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowControllerTests.swift; sourceTree = "<group>"; };
@@ -48,7 +45,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1000001234567890000005 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,7 +74,6 @@
 				A1000001234567890000012 /* AppDelegate.swift */,
 				A1000001234567890000013 /* HotkeyManager.swift */,
 				A1000001234567890000014 /* OverlayWindowController.swift */,
-				A1000001234567890000017 /* UpdateManager.swift */,
 				A1000001234567890000015 /* Info.plist */,
 				A1000001234567890000016 /* uguisu.entitlements */,
 			);
@@ -120,9 +115,6 @@
 			dependencies = (
 			);
 			name = uguisu;
-			packageProductDependencies = (
-				A1000001234567890000099 /* Sparkle */,
-			);
 			productName = uguisu;
 			productReference = A1000001234567890000010 /* uguisu.app */;
 			productType = "com.apple.product-type.application";
@@ -174,9 +166,6 @@
 				ja,
 			);
 			mainGroup = A1000001234567890000020;
-			packageReferences = (
-				A1000001234567890000098 /* XCRemoteSwiftPackageReference "Sparkle" */,
-			);
 			productRefGroup = A1000001234567890000022 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -213,7 +202,6 @@
 				A1000001234567890000002 /* AppDelegate.swift in Sources */,
 				A1000001234567890000003 /* HotkeyManager.swift in Sources */,
 				A1000001234567890000004 /* OverlayWindowController.swift in Sources */,
-				A1000001234567890000006 /* UpdateManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -467,25 +455,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		A1000001234567890000098 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.6.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		A1000001234567890000099 /* Sparkle */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A1000001234567890000098 /* XCRemoteSwiftPackageReference "Sparkle" */;
-			productName = Sparkle;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A1000001234567890000040 /* Project object */;
 }
