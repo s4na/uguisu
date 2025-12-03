@@ -10,8 +10,19 @@ enum TextInsertionResult {
 }
 
 class TextInsertionService {
-    private var targetApp: NSRunningApplication?
-    private var targetElement: AXUIElement?
+    private let queue = DispatchQueue(label: "com.uguisu.textinsertion", attributes: .concurrent)
+    private var _targetApp: NSRunningApplication?
+    private var _targetElement: AXUIElement?
+
+    private var targetApp: NSRunningApplication? {
+        get { queue.sync { _targetApp } }
+        set { queue.sync(flags: .barrier) { _targetApp = newValue } }
+    }
+
+    private var targetElement: AXUIElement? {
+        get { queue.sync { _targetElement } }
+        set { queue.sync(flags: .barrier) { _targetElement = newValue } }
+    }
 
     static let shared = TextInsertionService()
 
@@ -82,11 +93,11 @@ class TextInsertionService {
             &focusedElement
         )
 
-        guard result == .success, let element = focusedElement else {
+        guard result == .success, let element = focusedElement as? AXUIElement else {
             return nil
         }
 
-        return (element as! AXUIElement)
+        return element
     }
 
     private func insertViaAccessibility(_ text: String, to element: AXUIElement) -> Bool {

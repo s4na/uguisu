@@ -166,12 +166,9 @@ class OverlayWindow: NSWindow {
 // MARK: - Window Controller
 
 class OverlayWindowController: NSWindowController {
-    private var viewModel = OverlayViewModel()
+    private let viewModel: OverlayViewModel
 
     convenience init() {
-        let viewModel = OverlayViewModel()
-        let contentView = OverlayContentView(viewModel: viewModel)
-
         let window = OverlayWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 250),
             styleMask: [.borderless],
@@ -179,17 +176,29 @@ class OverlayWindowController: NSWindowController {
             defer: false
         )
 
-        window.viewModel = viewModel
-        window.contentView = NSHostingView(rootView: contentView)
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.level = .floating
-        window.center()
-        window.isMovableByWindowBackground = true
-
         self.init(window: window)
-        self.viewModel = viewModel
+    }
+
+    override init(window: NSWindow?) {
+        self.viewModel = OverlayViewModel()
+        super.init(window: window)
+
+        guard let overlayWindow = window as? OverlayWindow else { return }
+
+        let contentView = OverlayContentView(viewModel: viewModel)
+        overlayWindow.viewModel = viewModel
+        overlayWindow.contentView = NSHostingView(rootView: contentView)
+        overlayWindow.isOpaque = false
+        overlayWindow.backgroundColor = .clear
+        overlayWindow.level = .floating
+        overlayWindow.center()
+        overlayWindow.isMovableByWindowBackground = true
+
         setupCallbacks()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
     private func setupCallbacks() {

@@ -40,8 +40,25 @@ class STTEngine {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var audioEngine: AVAudioEngine?
 
-    private var isRecognizing = false
-    private var lastRecognizedText = ""
+    private let stateQueue = DispatchQueue(label: "com.uguisu.sttengine.state")
+    private var _isRecognizing = false
+    private var _lastRecognizedText = ""
+
+    private var isRecognizing: Bool {
+        get { stateQueue.sync { _isRecognizing } }
+        set { stateQueue.sync { _isRecognizing = newValue } }
+    }
+
+    private var lastRecognizedText: String {
+        get { stateQueue.sync { _lastRecognizedText } }
+        set { stateQueue.sync { _lastRecognizedText = newValue } }
+    }
+
+    // Error codes for speech recognition
+    private enum SpeechErrorCode {
+        static let normalTermination = 1110
+        static let domain = "kAFAssistantErrorDomain"
+    }
 
     // Default to Japanese locale, can be changed
     var locale: Locale = Locale(identifier: "ja-JP") {
@@ -123,7 +140,7 @@ class STTEngine {
                 if let error = error {
                     // Check if it's just the recognition ending
                     let nsError = error as NSError
-                    if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110 {
+                    if nsError.domain == SpeechErrorCode.domain && nsError.code == SpeechErrorCode.normalTermination {
                         // Recognition ended normally, finalize the text
                         if !self.lastRecognizedText.isEmpty {
                             self.delegate?.sttEngine(self, didRecognizeFinalResult: self.lastRecognizedText)
